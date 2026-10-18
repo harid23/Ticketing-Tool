@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Release Request Management
 
 Internal ticketing module for releasing employees from projects and offering them to other clusters.
@@ -69,3 +70,6 @@ Frontend production bundle: from `frontend`, run `npm ci` followed by `npm run b
 
 ## Docs
 Start with `docs/open-questions.md` (decisions only you can make), then `docs/architecture.md`.
+=======
+# Ticketing-Tool
+>>>>>>> 417a4f21928332071da02e34bbed1f27c3b6b726
