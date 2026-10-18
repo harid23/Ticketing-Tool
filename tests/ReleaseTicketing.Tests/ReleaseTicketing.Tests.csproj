@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><IsPackable>false</IsPackable></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ReleaseTicketing.Api\ReleaseTicketing.Api.csproj" />
+    <ProjectReference Include="..\..\src\ReleaseTicketing.Core\ReleaseTicketing.Core.csproj" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.*" />
+    <PackageReference Include="xunit" Version="2.*" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.*" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.*" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.*" />
+  </ItemGroup>
+</Project>

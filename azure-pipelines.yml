@@ -1,0 +1,45 @@
+# Azure DevOps. No secrets here: use a variable group / Key Vault-linked group for anything sensitive.
+trigger: { branches: { include: [ main ] } }
+pool: { vmImage: ubuntu-latest }
+
+stages:
+- stage: Backend
+  jobs:
+  - job: build_test
+    steps:
+    - task: UseDotNet@2
+      inputs: { packageType: sdk, version: '10.0.x' }
+    - script: dotnet restore tests/ReleaseTicketing.Tests/ReleaseTicketing.Tests.csproj
+      displayName: Restore
+    - script: dotnet restore src/ReleaseTicketing.Functions/ReleaseTicketing.Functions.csproj
+      displayName: Restore Functions
+    - script: dotnet build tests/ReleaseTicketing.Tests/ReleaseTicketing.Tests.csproj --no-restore -c Release
+      displayName: Build
+    - script: dotnet build src/ReleaseTicketing.Functions/ReleaseTicketing.Functions.csproj --no-restore -c Release
+      displayName: Build Functions
+    - script: dotnet test tests/ReleaseTicketing.Tests/ReleaseTicketing.Tests.csproj --no-build -c Release --filter "Category!=SqlServer" --logger trx
+      displayName: Test
+    - script: |
+        dotnet publish src/ReleaseTicketing.Api/ReleaseTicketing.Api.csproj -c Release --no-restore -o $(Build.ArtifactStagingDirectory)/api
+        dotnet publish src/ReleaseTicketing.Functions/ReleaseTicketing.Functions.csproj -c Release --no-restore -o $(Build.ArtifactStagingDirectory)/functions
+      displayName: Publish
+    - publish: $(Build.ArtifactStagingDirectory)
+      artifact: drop
+
+- stage: Frontend
+  jobs:
+  - job: web
+    steps:
+    - task: NodeTool@0
+      inputs: { versionSpec: '20.x' }
+    - script: npm ci
+      workingDirectory: frontend
+      displayName: Install frontend dependencies
+    - script: npm audit
+      workingDirectory: frontend
+      displayName: Audit frontend dependencies
+    - script: npm run build
+      workingDirectory: frontend
+      displayName: Build frontend
+    - publish: frontend/dist
+      artifact: frontend

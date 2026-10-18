@@ -1,0 +1,26 @@
+bin/
+obj/
+node_modules/
+dist/
+.vs/
+*.user
+appsettings.Local.json
+local.settings.json
+release-ticketing.local.db
+release-ticketing.local.db-shm
+release-ticketing.local.db-wal
+local-attachments/
+
+# Local environment configuration; keep checked-in examples.
+.env*
+!.env.example
+
+# Generated frontend dependencies and build output.
+node_modules/
+dist/
+
+# Local databases and SQLite sidecar files.
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*

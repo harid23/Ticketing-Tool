@@ -1,0 +1,12 @@
+# Security
+- **Authentication**: Entra ID access tokens validated by `Microsoft.Identity.Web`. No passwords stored.
+- **Entra setup**: register an API app (expose scope `access_as_user`), create **App Roles** with values exactly `PM, SDM, PMO, ClusterManager, Head, CompetencyPmo, Admin`, assign users/groups to roles; register the SPA app with permission to that scope.
+- **Standalone SPA**: MSAL redirect sign-in and API token acquisition are implemented. Follow [entra-setup.md](entra-setup.md) for app registrations, deployment variables, CORS, and cluster assignment.
+- **Authorization**: roles from the token; every service method re-checks. Tickets you may not see return 404.
+- **Validation**: DataAnnotations at the edge + `DtoValidator` in services; EF Core parameterises all SQL.
+- **Files**: extension allow-list, size limit, server-generated blob names, download as attachment with `nosniff`, access only through the API. Recommended extra: malware scanning (Defender for Storage) and magic-byte checks.
+- **Secrets**: none in code. Local: `dotnet user-secrets`. Azure: Key Vault + managed identity (SQL, Blob, Graph all use `DefaultAzureCredential`).
+- **Audit immutability**: EF blocks changes to audit/history. Also run: `DENY UPDATE, DELETE ON audit_logs TO [app-identity]; DENY UPDATE, DELETE ON ticket_status_history TO [app-identity];`
+- **CORS**: only origins in `Cors:AllowedOrigins`.
+- **Logging**: correlation id on every request; never log tokens, email bodies or documents.
+- **Graph**: grant the managed identity the `Mail.Send` application permission, ideally restricted to one mailbox with an Exchange Application Access Policy.

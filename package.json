@@ -1,0 +1,21 @@
+{
+  "name": "rt",
+  "version": "1.0.0",
+  "description": "Internal ticketing module for releasing employees from projects and offering them to other clusters. Backend: ASP.NET Core Web API (.NET 10) + EF Core + Azure SQL. Jobs: Azure Functions. Frontend: a React/TypeScript module for the existing APEX app.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "start": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "api": "dotnet run --project ./src/ReleaseTicketing.Api/ReleaseTicketing.Api.csproj --urls http://localhost:5000",
+    "test": "dotnet test --filter \"Category!=SqlServer\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
+}

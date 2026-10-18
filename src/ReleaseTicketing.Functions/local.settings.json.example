@@ -1,0 +1,10 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+    "ConnectionStrings__Default": "Server=(localdb)\\MSSQLLocalDB;Database=ReleaseTicketing;Trusted_Connection=True;TrustServerCertificate=True",
+    "Graph__Enabled": "false",
+    "Graph__SenderUser": ""
+  }
+}
