@@ -110,6 +110,31 @@
 .rr-flow-label { font-size: 0.78rem; }
 .rr-allocation-flow-detail { margin: 15px 0 0; color: var(--rr-muted); font-size: 0.82rem; }
 
+.rr-countdown {
+	display: grid;
+	gap: 12px;
+	margin-bottom: 16px;
+	padding: 16px 18px;
+	border: 1px solid rgba(124, 180, 255, 0.28);
+	border-radius: 12px;
+	background: linear-gradient(110deg, rgba(52, 120, 229, 0.18), rgba(17, 28, 45, 0.72));
+}
+.rr-countdown-expired { border-color: rgba(255, 133, 133, 0.45); }
+.rr-countdown-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; }
+.rr-countdown-heading > strong { color: #f4f8ff; }
+.rr-countdown-heading > span, .rr-countdown-stopped { color: var(--rr-muted); font-size: 0.82rem; }
+.rr-countdown-units { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.rr-countdown-unit { display: grid; justify-items: center; gap: 4px; padding: 10px 6px; border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 9px; background: rgba(7, 15, 28, 0.42); }
+.rr-countdown-unit strong { color: var(--rr-accent); font-size: clamp(1.35rem, 4vw, 2rem); font-variant-numeric: tabular-nums; line-height: 1; }
+.rr-countdown-unit span { color: var(--rr-muted); font-size: 0.7rem; }
+.rr-countdown-expired .rr-countdown-unit strong { color: var(--rr-danger); }
+.rr-countdown-stopped { margin: 0 0 16px; }
+.rr-countdown-compact { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.rr-countdown-compact > span { display: inline-flex; align-items: baseline; gap: 1px; }
+.rr-countdown-compact strong { color: var(--rr-accent); font-size: 0.82rem; }
+.rr-countdown-compact small { color: var(--rr-muted); font-size: 0.62rem; }
+.rr-countdown-compact-expired strong { color: var(--rr-danger); }
+
 .rr-form { width: min(100% - 32px, 1040px); margin: 24px auto 48px; color: var(--rr-text); }
 .rr-form h2 { margin: 0 0 20px; font-size: clamp(1.5rem, 3vw, 2rem); }
 .rr-form fieldset { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 14px 18px; margin: 0 0 16px; padding: 20px; border: 1px solid var(--rr-border); border-radius: 14px; background: var(--rr-panel); }
@@ -431,10 +456,34 @@
 .rr-flow-status { color: #1D4ED8; }
 .rr-flow-status-selected { color: #236547; }
 .rr-flow-status-rejected, .rr-flow-status-closed { color: #8b2929; }
+.rr-countdown { border-color: #cbdcf2; background: #eef5ff; }
+.rr-countdown-expired { border-color: #e6bcbc; background: #fff4f4; }
+.rr-countdown-heading > strong { color: #202124; }
+.rr-countdown-heading > span, .rr-countdown-stopped { color: #626a70; }
+.rr-countdown-unit { border-color: #d5e0ee; background: #fff; }
+.rr-countdown-unit strong { color: #2563EB; }
+.rr-countdown-unit span { color: #626a70; }
+.rr-countdown-expired .rr-countdown-unit strong { color: #a53131; }
+.rr-countdown-compact strong { color: #2563EB; }
+.rr-countdown-compact small { color: #626a70; }
+.rr-countdown-compact-expired strong { color: #a53131; }
+.rr-timeline-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.rr-timeline-heading strong { overflow-wrap: anywhere; }
+.rr-timeline-type { padding: 2px 7px; border: 1px solid rgba(124, 180, 255, 0.28); border-radius: 999px; color: var(--rr-muted); font-size: 0.68rem; font-weight: 700; }
+.rr-timeline .rr-muted { margin-top: 5px; }
 
 .rr-timeline { border-left-color: #c5c9cb; }
 .rr-timeline li { color: #303639; }
 .rr-timeline li::before { border-color: #fff; background: #2563EB; }
+.rr-countdown { border-color: #cbdcf2; background: #eef5ff; }
+.rr-countdown-expired { border-color: #e6bcbc; background: #fff4f4; }
+.rr-countdown-heading > strong { color: #202124; }
+.rr-countdown-heading > span, .rr-countdown-stopped { color: #626a70; }
+.rr-countdown-unit { border-color: #d5e0ee; background: #fff; }
+.rr-countdown-unit strong { color: #2563EB; }
+.rr-countdown-unit span { color: #626a70; }
+.rr-countdown-expired .rr-countdown-unit strong { color: #a53131; }
+.rr-timeline-type { border-color: #d5d8da; color: #626a70; }
 .rr-dialog { border: 1px solid #c9cdcf; border-radius: 4px; background: #fff; color: #202124; box-shadow: 0 16px 48px rgba(20, 26, 29, 0.24); }
 .rr-dialog::backdrop { background: rgba(25, 30, 32, 0.48); backdrop-filter: none; }
 .rr-dialog p { color: #555e63; }

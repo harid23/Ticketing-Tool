@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import type { Evaluation, EvaluationStatus, HistoryItem, SlaStatus, TicketStatus } from '../types';
 
 // Dates arrive as UTC from the API; the browser shows them in the user's local time zone.
@@ -16,6 +16,59 @@ export function SlaBadge({ sla, deadline }: { sla: SlaStatus; deadline?: string 
     title={deadline ? `Deadline: ${fmtDateTime(deadline)}` : 'No SLA deadline'}>{breached ? 'SLA BREACHED' : 'Within SLA'}</span>;
 }
 
+export function AllocationCountdown({ deadline, active, compact = false }: {
+  deadline: string | null; active: boolean; compact?: boolean
+}) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!active || !deadline) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [active, deadline]);
+
+  if (!active) return compact
+    ? <span className="rr-countdown-compact rr-countdown-stopped">Stopped</span>
+    : <p className="rr-countdown-stopped">Allocation timer stopped because this request is no longer active.</p>;
+  if (!deadline) return compact
+    ? <span className="rr-countdown-compact rr-countdown-stopped">—</span>
+    : <p className="rr-countdown-stopped">No allocation deadline is configured.</p>;
+
+  const hasTimezone = /(?:Z|[+-]\d{2}:\d{2})$/i.test(deadline);
+  const deadlineAt = Date.parse(hasTimezone ? deadline : `${deadline}Z`);
+  if (Number.isNaN(deadlineAt)) return <span role="alert" className="rr-error">Invalid deadline</span>;
+
+  const remainingSeconds = Math.max(0, Math.floor((deadlineAt - now) / 1000));
+  const values = [
+    { label: 'Days', value: Math.floor(remainingSeconds / 86400) },
+    { label: 'Hours', value: Math.floor((remainingSeconds % 86400) / 3600) },
+    { label: 'Minutes', value: Math.floor((remainingSeconds % 3600) / 60) },
+    { label: 'Seconds', value: remainingSeconds % 60 },
+  ];
+  const expired = remainingSeconds === 0;
+
+  if (compact) return <span className={`rr-countdown-compact${expired ? ' rr-countdown-compact-expired' : ''}`}
+    role="timer" aria-label={expired ? 'Allocation deadline reached' : 'Time remaining until allocation deadline'}>
+    {values.map(unit => <span key={unit.label}>
+      <strong>{String(unit.value).padStart(2, '0')}</strong><small>{unit.label.slice(0, 1)}</small>
+    </span>)}
+  </span>;
+
+  return <section className={`rr-countdown${expired ? ' rr-countdown-expired' : ''}`} role="timer"
+    aria-label={expired ? 'Allocation deadline reached' : 'Time remaining until allocation deadline'}>
+    <div className="rr-countdown-heading">
+      <strong>{expired ? 'Allocation deadline reached' : 'Time remaining'}</strong>
+      <span>Deadline: <time dateTime={deadline}>{fmtDateTime(deadline)}</time></span>
+    </div>
+    <div className="rr-countdown-units">
+      {values.map(unit => <div className="rr-countdown-unit" key={unit.label}>
+        <strong>{String(unit.value).padStart(2, '0')}</strong>
+        <span>{unit.label}</span>
+      </div>)}
+    </div>
+  </section>;
+}
+
 export function Card({ title, children, actions }: { title: string; children: ReactNode; actions?: ReactNode }) {
   return <section className="rr-card"><header><h3>{title}</h3>{actions}</header>{children}</section>;
 }
@@ -28,12 +81,21 @@ export const Empty = ({ text }: { text: string }) => <p className="rr-empty">{te
 
 export function Timeline({ items }: { items: HistoryItem[] }) {
   if (!items.length) return <Empty text="No history yet." />;
+  const eventLabel = (eventType: string) => ({
+    ClusterResponse: 'Cluster response',
+    AllocationStatus: 'Allocation status',
+    AllocationClosed: 'Allocation closed',
+  }[eventType] ?? eventType.replace(/([a-z])([A-Z])/g, '$1 $2'));
+
   return (
     <ol className="rr-timeline">
       {items.map(h => (
         <li key={h.historyId}>
-          <strong>{h.eventType === 'StatusChange' ? `${h.oldStatus ?? 'Created'} → ${h.newStatus}` : h.reason}</strong>
-          {h.eventType === 'StatusChange' && h.reason && <span> — {h.reason}</span>}
+          <div className="rr-timeline-heading">
+            <strong>{h.eventType === 'StatusChange' ? `${h.oldStatus ?? 'Created'} → ${h.newStatus}` : h.reason ?? eventLabel(h.eventType)}</strong>
+            {h.eventType !== 'StatusChange' && <span className="rr-timeline-type">{eventLabel(h.eventType)}</span>}
+          </div>
+          {h.eventType === 'StatusChange' && h.reason && <div className="rr-muted">{h.reason}</div>}
           {h.comments && <div className="rr-muted">“{h.comments}”</div>}
           <div className="rr-muted">{h.changedByName} · {fmtDateTime(h.changedAt)}</div>
         </li>

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { releaseApi } from '../api';
 import type { Attachment, AuditItem, Evaluation, HistoryItem, TicketDetail } from '../types';
-import { AllocationFlow, Card, Empty, ErrorBox, Field, fmtDate, fmtDateTime, Loading, SlaBadge, StatusBadge, Timeline } from '../components/Common';
+import { AllocationCountdown, AllocationFlow, Card, Empty, ErrorBox, Field, fmtDate, fmtDateTime, Loading, SlaBadge, StatusBadge, Timeline } from '../components/Common';
 import ActionDialog, { type DialogField } from '../components/ActionDialog';
 
 type Dlg = { title: string; intro?: string; fields?: DialogField[]; confirm: string; run: (v: Record<string, string>) => Promise<unknown> } | null;
@@ -25,6 +25,23 @@ export default function TicketDetailPage() {
     } catch (e) { setError((e as Error).message); }
   }, [id]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    let cancelled = false;
+    const refreshActivity = async () => {
+      try {
+        const [detail, items] = await Promise.all([releaseApi.get(id), releaseApi.history(id)]);
+        if (!cancelled) {
+          setT(detail);
+          setHistory(items);
+          setError('');
+        }
+      } catch (e) {
+        if (!cancelled) setError((e as Error).message);
+      }
+    };
+    const timer = window.setInterval(() => { void refreshActivity(); }, 10_000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [id]);
 
   const act = (d: NonNullable<Dlg>) => setDlg(d);
   const done = async (msg: string) => { setDlg(null); setNotice(msg); await load(); };
@@ -74,6 +91,7 @@ export default function TicketDetailPage() {
       {t.slaExceptionApproved && <p className="rr-success">A one-time 14-day SLA extension is approved. New deadline: {fmtDateTime(t.evaluationDeadlineAt)}.</p>}
 
       <Card title="Allocation process">
+        <AllocationCountdown deadline={t.evaluationDeadlineAt} active={t.status === 'OPEN' || t.status === 'WIP' || t.status === 'REOPENED'} />
         <AllocationFlow
           evaluations={t.evaluations.filter(evaluation => evaluation.response === 'YES_INTERESTED')}
           renderActions={evalButtons}

@@ -42,11 +42,213 @@ public class CreateTests
     }
 
     [Fact]
+    public async Task Feedback_of_exactly_100_non_whitespace_characters_is_accepted()
+    {
+        using var h = new Harness();
+        var dto = h.ValidDto();
+        dto.DetailedFeedback = new string('x', CreateReleaseRequestDto.MinFeedbackLength);
+
+        var ticket = await h.As(h.Pm()).Release.CreateAsync(dto, default);
+
+        Assert.Equal(CreateReleaseRequestDto.MinFeedbackLength, ticket.DetailedFeedback.Length);
+    }
+
+    [Fact]
     public async Task Missing_required_fields_are_rejected()
     {
         using var h = new Harness();
         var dto = h.ValidDto(); dto.EmployeeId = "";
         await Assert.ThrowsAsync<RequestValidationException>(() => h.As(h.Pm()).Release.CreateAsync(dto, default));
+    }
+
+    [Fact]
+    public async Task Every_string_length_limit_is_enforced_by_the_service()
+    {
+        using var h = new Harness();
+        var stringProperties = typeof(CreateReleaseRequestDto).GetProperties()
+            .Select(property => (Property: property, Limit: (StringLengthAttribute?)Attribute.GetCustomAttribute(property, typeof(StringLengthAttribute))))
+            .Where(item => item.Limit is not null);
+
+        foreach (var (property, limit) in stringProperties)
+        {
+            var dto = h.ValidDto();
+            property.SetValue(dto, new string('x', limit!.MaximumLength + 1));
+
+            var error = await Assert.ThrowsAsync<RequestValidationException>(() => h.As(h.Pm()).Release.CreateAsync(dto, default));
+            Assert.Contains(property.Name, error.Errors.Keys);
+        }
+
+        await AssertNoTicketCreatedAsync(h);
+    }
+
+    [Fact]
+    public async Task Whitespace_required_strings_and_missing_ids_or_date_are_rejected()
+    {
+        using var h = new Harness();
+        var requiredStringProperties = typeof(CreateReleaseRequestDto).GetProperties()
+            .Where(property => Attribute.IsDefined(property, typeof(RequiredAttribute)) && property.PropertyType == typeof(string));
+
+        foreach (var property in requiredStringProperties)
+        {
+            var dto = h.ValidDto();
+            property.SetValue(dto, "   ");
+
+            var error = await Assert.ThrowsAsync<RequestValidationException>(() => h.As(h.Pm()).Release.CreateAsync(dto, default));
+            Assert.Contains(property.Name, error.Errors.Keys);
+        }
+
+        foreach (var propertyName in new[] { nameof(CreateReleaseRequestDto.ClusterId), nameof(CreateReleaseRequestDto.ReleaseCategoryId), nameof(CreateReleaseRequestDto.ReleaseDate) })
+        {
+            var dto = h.ValidDto();
+            typeof(CreateReleaseRequestDto).GetProperty(propertyName)!.SetValue(dto, null);
+
+            var error = await Assert.ThrowsAsync<RequestValidationException>(() => h.As(h.Pm()).Release.CreateAsync(dto, default));
+            Assert.Contains(propertyName, error.Errors.Keys);
+        }
+
+        await AssertNoTicketCreatedAsync(h);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task Unknown_or_inactive_cluster_and_category_are_rejected_without_side_effects(bool invalidCluster, bool invalidCategory)
+    {
+        using var h = new Harness();
+        var dto = h.ValidDto();
+        if (invalidCluster) dto.ClusterId = 999;
+        if (invalidCategory) dto.ReleaseCategoryId = 999;
+
+        var error = await Assert.ThrowsAsync<RequestValidationException>(() => h.As(h.Pm()).Release.CreateAsync(dto, default));
+        Assert.Contains(invalidCluster ? "clusterId" : "releaseCategoryId", error.Errors.Keys);
+        await AssertNoTicketCreatedAsync(h);
+
+        if (invalidCluster)
+        {
+            await using var db = h.DbFactory();
+            var cluster = await db.Clusters.SingleAsync(item => item.Id == h.Ey1);
+            cluster.IsActive = false;
+            await db.SaveChangesAsync();
+            await Assert.ThrowsAsync<RequestValidationException>(() => h.As(h.Pm()).Release.CreateAsync(h.ValidDto(), default));
+            await AssertNoTicketCreatedAsync(h);
+        }
+        else
+        {
+            await using var db = h.DbFactory();
+            var category = await db.ReleaseCategories.SingleAsync(item => item.Id == 1);
+            category.IsActive = false;
+            await db.SaveChangesAsync();
+            await Assert.ThrowsAsync<RequestValidationException>(() => h.As(h.Pm()).Release.CreateAsync(h.ValidDto(), default));
+            await AssertNoTicketCreatedAsync(h);
+        }
+    }
+
+    [Fact]
+    public async Task Matching_master_data_is_trimmed_and_case_insensitive_without_override_audit()
+    {
+        using var h = new Harness();
+        var dto = h.ValidDto();
+        dto.EmployeeName = "  asha  ";
+        dto.Grade = " g5 ";
+        dto.Location = " CHENNAI ";
+        dto.CurrentSupervisor = " ravi ";
+        dto.CurrentProjectId = " p1 ";
+        dto.CurrentProjectName = " proj ";
+        dto.Psl = " psl1 ";
+        dto.Band = " b2 ";
+
+        var ticket = await h.As(h.Pm()).Release.CreateAsync(dto, default);
+
+        Assert.Equal(EmployeeSource.Master, ticket.EmployeeSource);
+        Assert.Equal("asha", ticket.EmployeeName);
+        Assert.Equal("g5", ticket.Grade);
+        await using var db = h.DbFactory();
+        Assert.DoesNotContain(db.AuditLogs, audit => audit.Action == "EmployeeMasterOverride");
+    }
+
+    [Fact]
+    public async Task Inactive_employee_master_record_is_treated_as_manual_entry()
+    {
+        using var h = new Harness();
+        await using (var db = h.DbFactory())
+        {
+            var employee = await db.Employees.SingleAsync(item => item.EmployeeId == "E100");
+            employee.IsActive = false;
+            await db.SaveChangesAsync();
+        }
+
+        var ticket = await h.CreateTicketAsync();
+
+        Assert.Equal(EmployeeSource.Manual, ticket.EmployeeSource);
+        await using var check = h.DbFactory();
+        Assert.Contains(check.AuditLogs, audit => audit.ReleaseRequestId == ticket.Id && audit.Action == "EmployeeManualEntry");
+    }
+
+    [Fact]
+    public async Task Circulation_creation_queues_one_request_for_each_other_active_cluster()
+    {
+        using var h = new Harness();
+        await using (var db = h.DbFactory())
+        {
+            foreach (var cluster in await db.Clusters.ToListAsync())
+            {
+                cluster.NotificationEmail = $"cluster{cluster.Id}@example.test";
+            }
+            await db.SaveChangesAsync();
+        }
+
+        var ticket = await h.CreateTicketAsync();
+
+        Assert.Equal(4, ticket.Evaluations.Count);
+        await using var check = h.DbFactory();
+        var requests = await check.NotificationQueue.Where(item => item.ReleaseRequestId == ticket.Id && item.Type == NotificationType.ClusterEvaluationRequest).ToListAsync();
+        Assert.Equal(7, requests.Count);
+        Assert.Equal(new[] { "cluster2@example.test", "cluster3@example.test", "cluster4@example.test", "cluster5@example.test", "mgr2@x.com", "mgr3@x.com", "mgr4@x.com" },
+            requests.Select(item => item.Recipient).OrderBy(recipient => recipient).ToArray());
+        Assert.All(requests, item =>
+        {
+            Assert.Equal(NotificationStatus.Pending, item.Status);
+            Assert.Contains(ticket.TicketNumber, item.PayloadJson);
+            Assert.Contains("2026-10-19", item.PayloadJson);
+        });
+        Assert.Equal(2, await check.NotificationQueue.CountAsync(item => item.ReleaseRequestId == ticket.Id && item.Type == NotificationType.TicketCreated));
+    }
+
+    [Fact]
+    public async Task Direct_release_category_assigns_head_without_cluster_notifications()
+    {
+        using var h = new Harness();
+
+        var ticket = await h.CreateTicketAsync(categoryId: 2);
+
+        Assert.Equal(TicketStatus.Wip, ticket.Status);
+        Assert.True(ticket.AssignedToHead);
+        Assert.Empty(ticket.Evaluations);
+        await using var db = h.DbFactory();
+        Assert.Equal(2, await db.NotificationQueue.CountAsync(item => item.ReleaseRequestId == ticket.Id && item.Type == NotificationType.TicketCreated));
+        Assert.Empty(await db.NotificationQueue.Where(item => item.ReleaseRequestId == ticket.Id && item.Type == NotificationType.ClusterEvaluationRequest).ToListAsync());
+        Assert.Contains(db.TicketStatusHistory, item => item.ReleaseRequestId == ticket.Id && item.NewStatus == TicketStatus.Wip);
+    }
+
+    [Fact]
+    public async Task Authorized_creator_without_a_user_id_is_forbidden_before_persistence()
+    {
+        using var h = new Harness();
+        var user = new TestUser { Roles = new HashSet<string> { RoleNames.Pm } };
+
+        await Assert.ThrowsAsync<ForbiddenException>(() => h.As(user).Release.CreateAsync(h.ValidDto(), default));
+
+        await AssertNoTicketCreatedAsync(h);
+    }
+
+    private static async Task AssertNoTicketCreatedAsync(Harness harness)
+    {
+        await using var db = harness.DbFactory();
+        Assert.Empty(await db.ReleaseRequests.ToListAsync());
+        Assert.Empty(await db.ClusterEvaluations.ToListAsync());
+        Assert.Empty(await db.TicketStatusHistory.ToListAsync());
+        Assert.Empty(await db.AuditLogs.ToListAsync());
+        Assert.Empty(await db.NotificationQueue.ToListAsync());
     }
 
     [Fact]
@@ -243,6 +445,54 @@ public class EvaluationTests
     }
 
     [Fact]
+    public async Task Ticket_history_includes_each_cluster_response_and_allocation_status_change()
+    {
+        using var h = new Harness();
+        var ticket = await h.CreateTicketAsync();
+        await Respond(h, ticket, h.Ey2, ClusterResponse.YesInterested);
+        await Respond(h, ticket, h.Ey3, ClusterResponse.NoNotInterested);
+        var evaluation = (await EvalsAsync(h, ticket.Id)).Single(item => item.ClusterId == h.Ey2);
+        var manager = h.As(h.Manager(h.Ey2)).Eval;
+        await manager.UpdateAllocationStatusAsync(ticket.Id, evaluation.EvaluationId,
+            new UpdateAllocationStatusDto { Status = AllocationStatus.InterviewScheduled }, default);
+        await manager.UpdateAllocationStatusAsync(ticket.Id, evaluation.EvaluationId,
+            new UpdateAllocationStatusDto { Status = AllocationStatus.WaitingForResults }, default);
+
+        var history = await h.As(h.Head()).Release.GetHistoryAsync(ticket.Id, default);
+        var clusterEvents = history.Where(item => item.EventType is "ClusterResponse" or "AllocationStatus").ToList();
+
+        Assert.Equal(4, clusterEvents.Count);
+        Assert.Contains(clusterEvents, item => item.EventType == "ClusterResponse" &&
+            item.Reason!.Contains("EY2 expressed interest", StringComparison.Ordinal));
+        Assert.Contains(clusterEvents, item => item.EventType == "ClusterResponse" &&
+            item.Reason!.Contains("EY3 declined", StringComparison.Ordinal));
+        Assert.Contains(clusterEvents, item => item.EventType == "AllocationStatus" &&
+            item.Reason!.Contains("Interested to InterviewScheduled", StringComparison.Ordinal));
+        Assert.Contains(clusterEvents, item => item.EventType == "AllocationStatus" &&
+            item.Reason!.Contains("InterviewScheduled to WaitingForResults", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Positive_cluster_interest_moves_open_ticket_to_wip_but_decline_does_not()
+    {
+        using var h = new Harness();
+        var ticket = await h.CreateTicketAsync();
+
+        await Respond(h, ticket, h.Ey2, ClusterResponse.NoNotInterested);
+        var afterDecline = await h.As(h.Pm()).Release.GetAsync(ticket.Id, default);
+        Assert.Equal(TicketStatus.Open, afterDecline.Status);
+
+        await Respond(h, ticket, h.Ey3, ClusterResponse.YesInterested);
+        var afterInterest = await h.As(h.Pm()).Release.GetAsync(ticket.Id, default);
+
+        Assert.Equal(TicketStatus.Wip, afterInterest.Status);
+        var history = await h.As(h.Pm()).Release.GetHistoryAsync(ticket.Id, default);
+        Assert.Contains(history, item => item.EventType == "StatusChange" &&
+            item.OldStatus == TicketStatus.Open && item.NewStatus == TicketStatus.Wip &&
+            item.Reason!.Contains("EY3 expressed interest", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Activity_feed_includes_system_updates_without_an_actor_id()
     {
         using var h = new Harness();
@@ -304,7 +554,7 @@ public class EvaluationTests
         await Respond(h, t, h.Ey3, ClusterResponse.YesInterested);
 
         var d = await h.As(h.Head()).Release.GetAsync(t.Id, default);
-        Assert.Equal(TicketStatus.Open, d.Status);
+        Assert.Equal(TicketStatus.Wip, d.Status);
         Assert.Null(d.OwnerCluster);
         var ey2 = d.Evaluations.Single(e => e.ClusterCode == "EY2"); var ey3 = d.Evaluations.Single(e => e.ClusterCode == "EY3");
         Assert.Equal((1, EvaluationStatus.Interested), (ey2.ResponseSequence!.Value, ey2.Status));
@@ -351,13 +601,13 @@ public class EvaluationTests
 
         var d = await h.As(h.Head()).Release.GetAsync(t.Id, default);
         Assert.Null(d.OwnerCluster);
-        Assert.Equal(TicketStatus.Open, d.Status);
+        Assert.Equal(TicketStatus.Wip, d.Status);
         Assert.Equal(EvaluationStatus.Rejected, d.Evaluations.Single(e => e.ClusterCode == "EY3").Status);
         Assert.Equal(EvaluationStatus.Interested, d.Evaluations.Single(e => e.ClusterCode == "EY2").Status);
     }
 
     [Fact]
-    public async Task Selection_closes_competing_allocation_tickets_but_keeps_request_open()
+    public async Task Selection_closes_competing_allocation_tickets_but_keeps_request_active()
     {
         using var h = new Harness(); var t = await h.CreateTicketAsync();
         await Respond(h, t, h.Ey2, ClusterResponse.YesInterested);
@@ -370,7 +620,7 @@ public class EvaluationTests
         await h.As(h.Manager(h.Ey2)).Eval.UpdateAllocationStatusAsync(t.Id, e2.EvaluationId,
             new UpdateAllocationStatusDto { Status = AllocationStatus.Selected }, default);
         var d = await h.As(h.Head()).Release.GetAsync(t.Id, default);
-        Assert.Equal(TicketStatus.Open, d.Status);
+        Assert.Equal(TicketStatus.Wip, d.Status);
         Assert.Equal("EY2", d.OwnerCluster);
         Assert.Equal(EvaluationStatus.Selected, d.Evaluations.Single(e => e.ClusterCode == "EY2").Status);
         Assert.Equal(EvaluationStatus.Closed, d.Evaluations.Single(e => e.ClusterCode == "EY3").Status);
@@ -379,7 +629,7 @@ public class EvaluationTests
         h.Clock.Advance(TimeSpan.FromDays(16));
         var slaResult = await h.As(h.System()).Sla.ProcessAsync(default);
         Assert.Equal(0, slaResult.AutoClosed);
-        Assert.Equal(TicketStatus.Open, (await h.As(h.Head()).Release.GetAsync(t.Id, default)).Status);
+        Assert.Equal(TicketStatus.Wip, (await h.As(h.Head()).Release.GetAsync(t.Id, default)).Status);
     }
 
     [Fact]
@@ -403,7 +653,7 @@ public class EvaluationTests
         await h.As(h.Manager(h.Ey2)).Eval.UpdateAllocationStatusAsync(t.Id, e2.EvaluationId,
             new UpdateAllocationStatusDto { Status = AllocationStatus.Rejected, RejectionReason = "No fit" }, default);
         var d = await h.As(h.Head()).Release.GetAsync(t.Id, default);
-        Assert.False(d.AssignedToHead); Assert.Equal(TicketStatus.Open, d.Status);
+        Assert.False(d.AssignedToHead); Assert.Equal(TicketStatus.Wip, d.Status);
         Assert.Equal(EvaluationStatus.Rejected, d.Evaluations.Single(e => e.ClusterCode == "EY2").Status);
     }
 
@@ -510,7 +760,7 @@ public class SlaTests
     }
 
     [Fact]
-    public async Task An_expired_request_stays_open_until_an_asdm_manager_closes_it()
+    public async Task An_expired_request_stays_active_until_an_asdm_manager_closes_it()
     {
         using var h = new Harness(); var t = await h.CreateTicketAsync();
         await RespondToCluster(h, t, h.Ey2);
@@ -518,7 +768,7 @@ public class SlaTests
         var r = await h.As(h.System()).Sla.ProcessAsync(default);
         Assert.Equal(0, r.AutoClosed);
         var beforeClose = await h.As(h.Head()).Release.GetAsync(t.Id, default);
-        Assert.Equal(TicketStatus.Open, beforeClose.Status);
+        Assert.Equal(TicketStatus.Wip, beforeClose.Status);
         Assert.Equal(SlaStatus.Breached, beforeClose.SlaStatus);
 
         var d = await h.As(h.Manager(h.Ey2)).Release.CloseAsync(t.Id,
@@ -609,6 +859,10 @@ public class LocalDemoScenarioTests
         Assert.Equal(4, first.Count);
         Assert.Equal(first.Select(item => item.TicketId).OrderBy(id => id),
             second.Select(item => item.TicketId).OrderBy(id => id));
+        var nearDeadlineScenario = first.Single(item => item.TicketNumber.EndsWith("-D13", StringComparison.Ordinal));
+        Assert.Equal(5, await db.TicketStatusHistory.CountAsync(item =>
+            item.ReleaseRequestId == nearDeadlineScenario.TicketId &&
+            (item.EventType == "ClusterResponse" || item.EventType == "AllocationStatus")));
         var closedScenario = first.Single(item => item.TicketNumber.EndsWith("-CLOSED", StringComparison.Ordinal));
         var closedRequest = await db.ReleaseRequests.SingleAsync(item => item.ReleaseRequestId == closedScenario.TicketId);
         Assert.True(closedRequest.ClosedAt.HasValue);

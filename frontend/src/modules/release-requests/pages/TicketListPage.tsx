@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { releaseApi } from '../api';
 import type { Cluster, Paged, TicketSummary } from '../types';
-import { Empty, ErrorBox, fmtDate, fmtDateTime, Loading, SlaBadge, StatusBadge } from '../components/Common';
+import { AllocationCountdown, Empty, ErrorBox, fmtDate, Loading, SlaBadge, StatusBadge } from '../components/Common';
 
 /** Used for "Release Requests" (mine=false) and "My tickets" (mine=true). All filtering/paging happens on the server. */
 export default function TicketListPage({ mine = false }: { mine?: boolean }) {
@@ -21,6 +21,15 @@ export default function TicketListPage({ mine = false }: { mine?: boolean }) {
     catch (e) { setError((e as Error).message); } finally { setLoading(false); }
   }, [filters, page, sort, mine]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const refresh = () => { void load(); };
+    const timer = window.setInterval(refresh, 10_000);
+    window.addEventListener('focus', refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', refresh);
+    };
+  }, [load]);
 
   const f = (k: keyof typeof filters, v: string) => { setPage(1); setFilters(p => ({ ...p, [k]: v })); };
   const th = (label: string, key: string) => (
@@ -42,13 +51,14 @@ export default function TicketListPage({ mine = false }: { mine?: boolean }) {
       {error && <ErrorBox message={error} />}
       {loading && !data ? <Loading /> : !data?.items.length ? <Empty text="No release requests match these filters." /> : (
         <div className="rr-table-wrap"><table className="rr-table">
-          <thead><tr>{th('Ticket', 'ticketNumber')}{th('Employee', 'employeeName')}<th>Cluster</th><th>Owner</th>{th('Status', 'status')}{th('SLA', 'slaStatus')}{th('Release date', 'releaseDate')}{th('Created', 'createdAt')}</tr></thead>
+          <thead><tr>{th('Ticket', 'ticketNumber')}{th('Employee', 'employeeName')}<th>Owner</th>{th('Status', 'status')}{th('SLA', 'slaStatus')}{th('Release date', 'releaseDate')}<th>Timer</th></tr></thead>
           <tbody>{data.items.map(t => (
             <tr key={t.id}>
               <td><Link to={`../${t.id}`}>{t.ticketNumber}</Link></td><td>{t.employeeName}<div className="rr-muted">{t.employeeId}</div></td>
-              <td>{t.initiatingCluster}</td><td>{t.assignedToHead ? 'Head' : t.ownerCluster ?? '—'}</td>
+              <td>{t.assignedToHead ? 'Head' : t.ownerCluster ?? '—'}</td>
               <td><StatusBadge status={t.status} /></td><td><SlaBadge sla={t.slaStatus} deadline={t.evaluationDeadlineAt} /></td>
-              <td>{fmtDate(t.releaseDate)}</td><td>{fmtDateTime(t.createdAt)}</td>
+              <td>{fmtDate(t.releaseDate)}</td>
+              <td><AllocationCountdown deadline={t.evaluationDeadlineAt} active={t.status === 'OPEN' || t.status === 'WIP' || t.status === 'REOPENED'} compact /></td>
             </tr>))}</tbody>
         </table></div>)}
       {data && <div className="rr-row"><button disabled={page <= 1} onClick={() => setPage(p => p - 1)}>Previous</button>

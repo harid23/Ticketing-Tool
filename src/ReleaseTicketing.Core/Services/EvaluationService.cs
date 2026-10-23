@@ -175,6 +175,8 @@ public class EvaluationService(AppDbContext db, AuditService audit, Notification
 
         wf.AddEvent(t, "ClusterResponse", response == ClusterResponse.YesInterested
             ? $"{e.Cluster.Code} expressed interest (sequence {e.ResponseSequence})" : $"{e.Cluster.Code} declined the resource");
+        if (response == ClusterResponse.YesInterested)
+            wf.ChangeStatus(t, TicketStatus.Wip, $"{e.Cluster.Code} expressed interest in the resource.");
         audit.Record("ClusterEvaluation", e.EvaluationId, "ClusterResponded", null,
             new { Cluster = e.Cluster.Code, response, e.ResponseSequence }, t.ReleaseRequestId);
 

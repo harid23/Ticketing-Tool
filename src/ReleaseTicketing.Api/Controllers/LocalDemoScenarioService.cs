@@ -30,7 +30,8 @@ public class LocalDemoScenarioService(AppDbContext db, ICurrentUser user, TimePr
         {
             var ticketNumber = $"DEMO-{year}-{definition.Code}";
             var ticket = await db.ReleaseRequests
-                .Include(request => request.Evaluations)
+                .Include(request => request.Evaluations).ThenInclude(evaluation => evaluation.Cluster)
+                .Include(request => request.History)
                 .FirstOrDefaultAsync(request => request.TicketNumber == ticketNumber, ct);
             if (ticket is not null)
             {
@@ -66,6 +67,7 @@ public class LocalDemoScenarioService(AppDbContext db, ICurrentUser user, TimePr
                         audit.Action == "SlaBreached" && audit.PerformedAt == legacyInitialDeadline, ct))
                         db.AuditLogs.Add(SlaBreachAudit(ticket, legacyInitialDeadline));
                 }
+                EnsureEvaluationHistory(ticket);
                 created.Add((definition, ticket));
                 continue;
             }
@@ -114,8 +116,10 @@ public class LocalDemoScenarioService(AppDbContext db, ICurrentUser user, TimePr
                 Evaluations = []
             };
 
-            foreach (var clusterId in await db.Clusters.Where(cluster => cluster.IsActive).Select(cluster => cluster.Id).ToListAsync(ct))
+            var clusters = await db.Clusters.Where(cluster => cluster.IsActive).ToListAsync(ct);
+            foreach (var cluster in clusters)
             {
+                var clusterId = cluster.Id;
                 var evaluatedStatus = clusterId switch
                 {
                     2 when definition.AllocationStatus == EvaluationStatus.InterviewScheduled => EvaluationStatus.InterviewScheduled,
@@ -127,9 +131,10 @@ public class LocalDemoScenarioService(AppDbContext db, ICurrentUser user, TimePr
                 ticket.Evaluations.Add(new ClusterEvaluation
                 {
                     ClusterId = clusterId,
+                    Cluster = cluster,
                     Status = evaluatedStatus,
                     Response = interested ? ClusterResponse.YesInterested : null,
-                    ResponseAt = interested ? createdAt.AddDays(Math.Max(1, -definition.CreatedDaysAgo / 2)) : null,
+                    ResponseAt = interested ? createdAt.AddDays(Math.Max(1, -definition.CreatedDaysAgo / 4)) : null,
                     ResponseSequence = interested ? (clusterId == 2 ? 1 : 2) : null,
                     StartedAt = evaluatedStatus is EvaluationStatus.InterviewScheduled or EvaluationStatus.WaitingForResults
                         ? createdAt.AddDays(Math.Max(1, -definition.CreatedDaysAgo / 3)) : null,
@@ -137,6 +142,7 @@ public class LocalDemoScenarioService(AppDbContext db, ICurrentUser user, TimePr
                 });
             }
 
+            EnsureEvaluationHistory(ticket);
             ticket.History.Add(new TicketStatusHistory
             {
                 EventType = "StatusChange",
@@ -237,6 +243,55 @@ public class LocalDemoScenarioService(AppDbContext db, ICurrentUser user, TimePr
             pm.UserRoles.Add(new UserRole { User = pm, RoleId = 1 });
         await db.SaveChangesAsync(ct);
         return pm.Id;
+    }
+
+    private static void EnsureEvaluationHistory(ReleaseRequest ticket)
+    {
+        foreach (var evaluation in ticket.Evaluations)
+        {
+            if (evaluation.Response is { } response && evaluation.ResponseAt is { } responseAt)
+            {
+                var responseReason = response == ClusterResponse.YesInterested
+                    ? $"{evaluation.Cluster.Code} expressed interest (sequence {evaluation.ResponseSequence})"
+                    : $"{evaluation.Cluster.Code} declined the resource";
+                if (!ticket.History.Any(item => item.EventType == "ClusterResponse" && item.Reason == responseReason))
+                    ticket.History.Add(new TicketStatusHistory
+                    {
+                        ReleaseRequestId = ticket.ReleaseRequestId,
+                        EventType = "ClusterResponse",
+                        OldStatus = ticket.Status,
+                        NewStatus = ticket.Status,
+                        ChangedByName = $"{evaluation.Cluster.Code} demo manager",
+                        ChangedAt = responseAt,
+                        Reason = responseReason
+                    });
+            }
+
+            var startedAt = evaluation.StartedAt ?? evaluation.ResponseAt ?? ticket.CreatedAt;
+            if (evaluation.Status is EvaluationStatus.InterviewScheduled or EvaluationStatus.WaitingForResults)
+                EnsureAllocationEvent(ticket, evaluation, EvaluationStatus.Interested,
+                    EvaluationStatus.InterviewScheduled, startedAt);
+            if (evaluation.Status == EvaluationStatus.WaitingForResults)
+                EnsureAllocationEvent(ticket, evaluation, EvaluationStatus.InterviewScheduled,
+                    EvaluationStatus.WaitingForResults, startedAt.AddMinutes(1));
+        }
+    }
+
+    private static void EnsureAllocationEvent(ReleaseRequest ticket, ClusterEvaluation evaluation,
+        EvaluationStatus oldStatus, EvaluationStatus newStatus, DateTime changedAt)
+    {
+        var reason = $"{evaluation.Cluster.Code} allocation status changed from {oldStatus} to {newStatus}";
+        if (ticket.History.Any(item => item.EventType == "AllocationStatus" && item.Reason == reason)) return;
+        ticket.History.Add(new TicketStatusHistory
+        {
+            ReleaseRequestId = ticket.ReleaseRequestId,
+            EventType = "AllocationStatus",
+            OldStatus = ticket.Status,
+            NewStatus = ticket.Status,
+            ChangedByName = $"{evaluation.Cluster.Code} demo manager",
+            ChangedAt = changedAt,
+            Reason = reason
+        });
     }
 
     private static AuditLog SlaExtensionAudit(ReleaseRequest ticket, DateTime originalDeadline, DateTime extendedDeadline)
